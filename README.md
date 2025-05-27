@@ -55,9 +55,9 @@
 1. **Backend (Python)**:
 ```bash
 cd backend
-python -m venv venv
+python3.12 -m venv venv  # Используйте Python 3.12 для лучшей совместимости
 source venv/bin/activate  # Linux/Mac
-pip install -r requirements.txt
+pip install -r requirements.txt  # Зависимости без фиксированных версий
 cp env.example .env
 # Отредактируйте .env (добавьте API ключ для LLM)
 python main.py
@@ -65,7 +65,7 @@ python main.py
 
 2. **Frontend (React)**:
 ```bash
-npm install --save-dev @types/react @types/react-dom
+npm install
 npm run dev
 ```
 
@@ -93,7 +93,7 @@ npm run dev
 
 ## 📋 Требования
 
-- **Python 3.8+**
+- **Python 3.12+** (рекомендуется для лучшей совместимости)
 - **Node.js 16+**
 - **API ключ LLM** (опционально, для умных названий кластеров)
 - **4GB RAM** (для sentence-transformers модели)

@@ -1,24 +1,30 @@
-fastapi==0.104.1
-uvicorn==0.24.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
-# snscrape==0.7.0.20230622  # Проблемы с Python 3.12
+# FastAPI и веб-сервер
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+
+# LLM и AI
+langchain
+langchain-openai
+langchain-anthropic
+langchain-google-genai
+langchain-community
+openai
+
+# Утилиты
+python-dotenv
+httpx
+aiofiles
+python-multipart
+beautifulsoup4
+
+# Парсинг Telegram (опционально)
 git+https://github.com/JustAnotherArchivist/snscrape.git
-langchain==0.1.0
-langchain-openai==0.0.2
-langchain-anthropic==0.0.1
-langchain-google-genai==0.0.5
-langchain-community==0.0.10
-python-dotenv==1.0.0
-httpx==0.25.2
-aiofiles==23.2.0
-python-multipart==0.0.6
-telethon==1.36.0
-beautifulsoup4==4.13.4
-# Для embeddings и кластеризации
-sentence-transformers==4.1.0
-scikit-learn==1.3.2
-numpy==1.26.4
-openai==1.82.0
-torch==2.7.0
-scipy==1.15.3 
+
+# ML и кластеризация
+sentence-transformers
+scikit-learn
+numpy
+torch
+scipy 
