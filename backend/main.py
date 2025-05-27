@@ -1,5 +1,7 @@
 import sys
 import os
+# Устанавливаем переменную окружения для предотвращения предупреждений tokenizers
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI
