@@ -1,30 +1,35 @@
-# FastAPI и веб-сервер
+# Core FastAPI dependencies
 fastapi
 uvicorn
 pydantic
 pydantic-settings
 
-# LLM и AI
+# Web scraping
+beautifulsoup4
+
+# ML and embeddings
+sentence-transformers
+scikit-learn
+numpy
+
+# LLM providers
+openai
+anthropic
+google-generativeai
+
+# LangChain for LLM abstraction
 langchain
 langchain-openai
 langchain-anthropic
 langchain-google-genai
 langchain-community
-openai
 
 # Утилиты
 python-dotenv
 httpx
 aiofiles
 python-multipart
-beautifulsoup4
 
-# Парсинг Telegram (опционально)
-git+https://github.com/JustAnotherArchivist/snscrape.git
-
-# ML и кластеризация
-sentence-transformers
-scikit-learn
-numpy
+# ML and clustering
 torch
 scipy 

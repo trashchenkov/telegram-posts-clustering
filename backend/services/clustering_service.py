@@ -219,6 +219,26 @@ class ClusteringService:
         if len(raw_posts) == 0:
             return []
         
+        # Дополнительная фильтрация пустых постов
+        filtered_posts = []
+        skipped_empty = 0
+        for post in raw_posts:
+            if post.post_text and len(post.post_text.strip()) > 10:
+                filtered_posts.append(post)
+            else:
+                skipped_empty += 1
+                logger.debug(f"⏭️ Пост {post.id}: пропущен в кластеризации (нет содержательного текста)")
+        
+        if skipped_empty > 0:
+            logger.info(f"📊 Пропущено пустых постов в кластеризации: {skipped_empty}")
+        
+        if len(filtered_posts) == 0:
+            logger.warning("⚠️ После фильтрации не осталось постов для кластеризации")
+            return []
+        
+        logger.info(f"✅ После фильтрации осталось {len(filtered_posts)} постов для кластеризации")
+        raw_posts = filtered_posts  # Используем отфильтрованные посты
+        
         # Если постов мало или нет embedding модели, используем keyword-based
         if len(raw_posts) < 3 or not self.embedding_model:
             logger.info("🔄 Используем keyword-based кластеризацию (мало постов или нет модели)")

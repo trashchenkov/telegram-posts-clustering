@@ -17,7 +17,7 @@ class TelegramParser:
     def __init__(self, max_workers: int = 5):
         self.max_workers = max_workers
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
-    
+        
     def _extract_formatted_text(self, text_elem) -> str:
         """Извлекает текст с сохранением базового форматирования"""
         if not text_elem:
@@ -42,78 +42,119 @@ class TelegramParser:
         
         return text if text else None
     
-    def _clean_snscrape_text(self, text: str) -> str:
-        """Очищает и форматирует текст от snscrape"""
-        if not text:
-            return None
-            
-        # Убираем лишние пробелы и табуляции
-        text = re.sub(r'[ \t]+', ' ', text)
-        
-        # Нормализуем переносы строк
-        text = re.sub(r'\r\n', '\n', text)
-        text = re.sub(r'\r', '\n', text)
-        
-        # Убираем тройные+ переносы, оставляем максимум двойные
-        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
-        
-        # Убираем пробелы в начале и конце строк
-        lines = [line.strip() for line in text.split('\n')]
-        text = '\n'.join(lines)
-        
-        return text.strip() if text.strip() else None
-    
     async def _parse_channel_with_http(self, channel: str, hours_back: int = 24, limit: int = 50) -> List[RawPost]:
         """Парсинг через HTTP запросы к t.me"""
         posts = []
         # Используем UTC timezone для корректного сравнения
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
+        logger.info(f"🕒 Фильтруем посты новее {cutoff_time.isoformat()} (последние {hours_back}ч)")
         
         try:
             url = f"https://t.me/s/{channel}"
             logger.info(f"🌐 Попытка HTTP парсинга канала {channel}: {url}")
             
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 response = await client.get(url)
                 response.raise_for_status()
                 
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
-                # Ищем посты в HTML
+                # Ищем посты в HTML - пробуем разные селекторы
                 post_elements = soup.find_all('div', class_='tgme_widget_message')
                 
+                # Если не найдены посты с классом tgme_widget_message, пробуем другие варианты
+                if not post_elements:
+                    # Возможно, структура изменилась, пробуем другие селекторы
+                    post_elements = soup.find_all('div', class_='tgme_channel_post')
+                    if not post_elements:
+                        post_elements = soup.find_all('article')
+                    if not post_elements:
+                        post_elements = soup.find_all('div', class_='message')
+                
+                logger.info(f"🔍 Найдено {len(post_elements)} элементов постов в HTML")
+                
+                # Если постов все еще нет, возможно канал требует авторизации или изменил структуру
+                if not post_elements:
+                    logger.warning(f"⚠️ Посты не найдены на странице {response.url}. Возможно, канал требует авторизации или изменил структуру.")
+                    # Проверяем, есть ли кнопка "View in Telegram" - это означает, что нужна авторизация
+                    view_button = soup.find('a', class_='tgme_action_button_new')
+                    if view_button:
+                        logger.info(f"🔒 Канал {channel} требует авторизации в Telegram для просмотра постов")
+                    return []
+                
                 post_count = 0
+                skipped_old = 0
+                skipped_no_time = 0
+                skipped_no_content = 0
+                
                 for element in post_elements[:limit]:
                     try:
-                        # Извлекаем ID поста
+                        # Извлекаем ID поста - пробуем разные способы
                         post_link_elem = element.find('a', class_='tgme_widget_message_date')
+                        if not post_link_elem:
+                            # Пробуем другие селекторы для ссылки на пост
+                            post_link_elem = element.find('a', href=True)
                         if not post_link_elem:
                             continue
                             
                         post_link = post_link_elem.get('href', '')
                         post_id = post_link.split('/')[-1] if post_link else str(post_count)
                         
-                        # Извлекаем время
+                        # Извлекаем время - пробуем несколько способов
+                        post_time = None
                         time_elem = element.find('time')
+                        
                         if time_elem and time_elem.get('datetime'):
-                            post_time = datetime.fromisoformat(time_elem['datetime'].replace('Z', '+00:00'))
+                            datetime_str = time_elem['datetime']
+                            try:
+                                # Обрабатываем разные форматы времени
+                                if datetime_str.endswith('Z'):
+                                    post_time = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+                                elif '+' in datetime_str or datetime_str.endswith('00'):
+                                    post_time = datetime.fromisoformat(datetime_str)
+                                else:
+                                    # Если нет timezone info, считаем UTC
+                                    post_time = datetime.fromisoformat(datetime_str).replace(tzinfo=timezone.utc)
+                                    
+                                logger.debug(f"📅 Пост {post_id}: время {post_time.isoformat()}")
+                                
+                            except Exception as e:
+                                logger.warning(f"⚠️ Ошибка парсинга времени '{datetime_str}' для поста {post_id}: {e}")
+                                post_time = None
+                        
+                        # Если время не найдено, пропускаем пост
+                        if post_time is None:
+                            logger.debug(f"⏰ Пост {post_id}: время не найдено, пропускаем")
+                            skipped_no_time += 1
+                            continue
+                        
                             # Проверяем время публикации
                             if post_time < cutoff_time:
+                            logger.debug(f"🕒 Пост {post_id}: слишком старый ({post_time.isoformat()}), пропускаем")
+                            skipped_old += 1
                                 continue
-                        else:
-                            # Если время не найдено, используем текущее время минус случайный интервал
-                            post_time = datetime.now(timezone.utc) - timedelta(minutes=random.randint(0, hours_back * 60))
                         
-                        # Извлекаем текст поста
+                        # Извлекаем текст поста - пробуем разные селекторы
                         text_elem = element.find('div', class_='tgme_widget_message_text')
+                        if not text_elem:
+                            text_elem = element.find('div', class_='message_text')
+                        if not text_elem:
+                            text_elem = element.find('div', class_='post_content')
+                        
                         post_text = self._extract_formatted_text(text_elem)
                         
-                        # Проверяем наличие медиа
-                        has_media = bool(element.find('a', class_='tgme_widget_message_photo_wrap') or 
+                        # Проверяем наличие медиа - пробуем разные селекторы
+                        has_media = bool(
+                            element.find('a', class_='tgme_widget_message_photo_wrap') or 
                                        element.find('video') or 
-                                       element.find('div', class_='tgme_widget_message_video'))
+                            element.find('div', class_='tgme_widget_message_video') or
+                            element.find('img') or
+                            element.find('div', class_='media')
+                        )
                         
-                        if post_text or has_media:  # Добавляем только если есть контент
+                        # Добавляем только если есть содержательный текст
+                        # Медиа-посты без текста пропускаем, так как они не несут информационной ценности для кластеризации
+                        if post_text and len(post_text.strip()) > 10:  # Минимум 10 символов содержательного текста
                             post = RawPost(
                                 id=f"{channel}_http_{post_id}_{int(post_time.timestamp())}",
                                 channel_name=channel,
@@ -124,110 +165,26 @@ class TelegramParser:
                             )
                             posts.append(post)
                             post_count += 1
+                            logger.debug(f"✅ Пост {post_id}: добавлен ({post_time.isoformat()})")
+                        else:
+                            logger.debug(f"⏭️ Пост {post_id}: пропущен (нет содержательного текста)")
+                            skipped_no_content += 1
                             
                     except Exception as e:
                         logger.warning(f"Ошибка обработки поста в канале {channel}: {e}")
                         continue
                 
-                logger.info(f"✅ HTTP: найдено {post_count} реальных постов в канале {channel}")
+                logger.info(f"✅ HTTP: найдено {post_count} актуальных постов в канале {channel}")
+                logger.info(f"📊 Статистика: пропущено старых: {skipped_old}, без времени: {skipped_no_time}, без содержательного текста: {skipped_no_content}")
                 return posts
                 
         except Exception as e:
             logger.warning(f"⚠️ HTTP парсинг не удался для канала {channel}: {e}")
-            raise
-    
-    def _parse_channel_with_snscrape(self, channel: str, hours_back: int = 24, limit: int = 50) -> List[RawPost]:
-        """Парсинг через snscrape"""
-        posts = []
-        # Используем UTC timezone для корректного сравнения
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
-        
-        try:
-            import snscrape.modules.telegram as snstelegram
-            
-            logger.info(f"🔧 Попытка парсинга канала {channel} через snscrape...")
-            
-            # Создаем scraper для канала
-            scraper = snstelegram.TelegramChannelScraper(channel)
-            
-            post_count = 0
-            for i, item in enumerate(scraper.get_items()):
-                if i >= limit:
-                    logger.info(f"Достигнут лимит {limit} постов для канала {channel}")
-                    break
-                    
-                # Проверяем время публикации
-                # Убеждаемся, что item.date имеет timezone info
-                item_date = item.date
-                if item_date.tzinfo is None:
-                    item_date = item_date.replace(tzinfo=timezone.utc)
-                
-                if item_date < cutoff_time:
-                    logger.info(f"Достигнута граница времени {hours_back}ч для канала {channel}")
-                    break
-                
-                # Извлекаем текст поста
-                post_text = None
-                if hasattr(item, 'content') and item.content:
-                    post_text = self._clean_snscrape_text(item.content)
-                elif hasattr(item, 'rawContent') and item.rawContent:
-                    post_text = self._clean_snscrape_text(item.rawContent)
-                
-                # Проверяем наличие медиа
-                has_media = False
-                if hasattr(item, 'media') and item.media:
-                    has_media = True
-                elif hasattr(item, 'photo') and item.photo:
-                    has_media = True
-                elif hasattr(item, 'video') and item.video:
-                    has_media = True
-                
-                # Формируем ссылку на пост
-                post_link = f"https://t.me/{channel}/{item.id}" if hasattr(item, 'id') else item.url
-                
-                post = RawPost(
-                    id=f"{channel}_snscrape_{item.id}_{int(item.date.timestamp())}",
-                    channel_name=channel,
-                    publication_datetime=item.date.isoformat(),
-                    post_link=post_link,
-                    post_text=post_text,
-                    has_media=has_media
-                )
-                posts.append(post)
-                post_count += 1
-                
-            logger.info(f"✅ snscrape: найдено {post_count} реальных постов в канале {channel}")
-            return posts
-            
-        except ImportError as e:
-            logger.error(f"❌ snscrape не установлен: {e}")
-            raise
-        except Exception as e:
-            logger.warning(f"⚠️ snscrape ошибка для канала {channel}: {e}")
-            raise
-    
-    async def _parse_channel_sync(self, channel: str, hours_back: int = 24, limit: int = 50) -> List[RawPost]:
-        """Синхронный парсинг одного канала с fallback стратегией"""
-        
-        # Стратегия 1: HTTP парсинг
-        try:
-            return await self._parse_channel_with_http(channel, hours_back, limit)
-        except Exception as e:
-            logger.warning(f"HTTP парсинг не сработал для {channel}: {e}")
-        
-        # Стратегия 2: snscrape
-        try:
-            return self._parse_channel_with_snscrape(channel, hours_back, limit)
-        except Exception as e:
-            logger.warning(f"snscrape не сработал для {channel}: {e}")
-        
-        # Если ничего не сработало, возвращаем пустой список
-        logger.warning(f"❌ Не удалось получить посты из канала {channel}")
-        return []
+            return []
     
     async def parse_channel(self, channel: str, hours_back: int = 24, limit: int = 50) -> List[RawPost]:
         """Асинхронный парсинг одного канала"""
-        return await self._parse_channel_sync(channel, hours_back, limit)
+        return await self._parse_channel_with_http(channel, hours_back, limit)
     
     async def parse_channels(self, channels: List[str], hours_back: int = 24, limit: int = 50) -> List[RawPost]:
         """Асинхронный парсинг нескольких каналов"""

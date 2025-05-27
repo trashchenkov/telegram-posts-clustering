@@ -148,3 +148,79 @@ async def get_providers():
         ]
     }
     return providers 
+
+@router.get("/debug/dates/{channel}")
+async def debug_channel_dates(channel: str, hours_back: int = 24):
+    """Диагностический эндпоинт для анализа дат в постах канала"""
+    try:
+        from datetime import datetime, timezone, timedelta
+        import httpx
+        from bs4 import BeautifulSoup
+        
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
+        
+        url = f"https://t.me/s/{channel}"
+        
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            post_elements = soup.find_all('div', class_='tgme_widget_message')
+            
+            debug_info = {
+                "channel": channel,
+                "final_url": str(response.url),
+                "cutoff_time": cutoff_time.isoformat(),
+                "total_posts_found": len(post_elements),
+                "posts_analysis": []
+            }
+            
+            for i, element in enumerate(post_elements[:10]):  # Анализируем первые 10 постов
+                post_info = {"index": i}
+                
+                # Извлекаем ID поста
+                post_link_elem = element.find('a', class_='tgme_widget_message_date')
+                if post_link_elem:
+                    post_link = post_link_elem.get('href', '')
+                    post_id = post_link.split('/')[-1] if post_link else str(i)
+                    post_info["post_id"] = post_id
+                    post_info["post_link"] = post_link
+                
+                # Анализируем время
+                time_elem = element.find('time')
+                if time_elem:
+                    datetime_attr = time_elem.get('datetime')
+                    post_info["time_element_found"] = True
+                    post_info["datetime_attribute"] = datetime_attr
+                    
+                    if datetime_attr:
+                        try:
+                            if datetime_attr.endswith('Z'):
+                                post_time = datetime.fromisoformat(datetime_attr.replace('Z', '+00:00'))
+                            elif '+' in datetime_attr or datetime_attr.endswith('00'):
+                                post_time = datetime.fromisoformat(datetime_attr)
+                            else:
+                                post_time = datetime.fromisoformat(datetime_attr).replace(tzinfo=timezone.utc)
+                            
+                            post_info["parsed_time"] = post_time.isoformat()
+                            post_info["is_newer_than_cutoff"] = post_time >= cutoff_time
+                            post_info["age_hours"] = (datetime.now(timezone.utc) - post_time).total_seconds() / 3600
+                            
+                        except Exception as e:
+                            post_info["parse_error"] = str(e)
+                else:
+                    post_info["time_element_found"] = False
+                
+                # Проверяем наличие текста
+                text_elem = element.find('div', class_='tgme_widget_message_text')
+                post_info["has_text"] = bool(text_elem and text_elem.get_text(strip=True))
+                if text_elem:
+                    post_info["text_preview"] = text_elem.get_text(strip=True)[:100] + "..." if len(text_elem.get_text(strip=True)) > 100 else text_elem.get_text(strip=True)
+                
+                debug_info["posts_analysis"].append(post_info)
+            
+            return debug_info
+            
+    except Exception as e:
+        return {"error": str(e), "channel": channel} 

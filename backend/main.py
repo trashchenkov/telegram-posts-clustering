@@ -13,12 +13,16 @@ from api.routes import router
 from config.settings import settings
 
 # Настройка логирования
+log_level = logging.DEBUG if os.getenv("DEBUG_DATES", "false").lower() == "true" else logging.INFO
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
 logger = logging.getLogger(__name__)
+
+if log_level == logging.DEBUG:
+    logger.info("🐛 DEBUG режим включен для диагностики дат")
 
 # Создание FastAPI приложения
 app = FastAPI(
