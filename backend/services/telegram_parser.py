@@ -128,11 +128,11 @@ class TelegramParser:
                             skipped_no_time += 1
                             continue
                         
-                            # Проверяем время публикации
-                            if post_time < cutoff_time:
+                        # Проверяем время публикации
+                        if post_time < cutoff_time:
                             logger.debug(f"🕒 Пост {post_id}: слишком старый ({post_time.isoformat()}), пропускаем")
                             skipped_old += 1
-                                continue
+                            continue
                         
                         # Извлекаем текст поста - пробуем разные селекторы
                         text_elem = element.find('div', class_='tgme_widget_message_text')
